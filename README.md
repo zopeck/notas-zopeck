@@ -1,8 +1,7 @@
 # Notas Zopeck
 
 ---
-**Notas Zopeck** es un sistema de creación, búsqueda y gestión de notas en texto plano ultrarrápido y liviano para entornos Linux. Construido en Bash sobre **YAD** (Yet Another Dialog) y herramientas GNU, está diseñado para consumir el mínimo de recursos sin perder rendimiento, resultando ideal para equipos de prestaciones modestas (como laptops ligeras o Netbooks) o entornos minimalistas.
-
+**Notas Zopeck** es un sistema de creación, búsqueda y gestión de notas en texto plano ultrarrápido y liviano para entornos Linux. Construido en Bash sobre **YAD** (Yet Another Dialog) y herramientas GNU, está diseñado para consumir el mínimo de recursos sin perder rendimiento, resultando ideal para equipos de prestaciones modestas (como laptops ligeras o Netbooks) o entornos minimalistas. Se recomienda su uso sobre X11, no está optimizado para sistemas basados en Wayland.
 
 ## 🛠️ Características Principales
 
