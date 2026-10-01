@@ -67,8 +67,8 @@ Las notas se guardan automaticamente en formato ```.txt``` dentro de:
 
 ## 💻 Modo de Uso
 
-Búsqueda y Gestión por Línea de Comandos
-Puedes lanzar el script principal pasando diferentes argumentos según lo que necesites:
+Búsqueda y gestión por línea de comandos
+Se puede lanzar el script principal pasando diferentes argumentos según lo que se necesite:
 
 ```text
 # Abrir el formulario de búsqueda avanzada (por defecto)
