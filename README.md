@@ -6,7 +6,7 @@
 ## 🛠️ Características Principales
 
 * **Autoguardado inteligente:** Guarda el contenido automáticamente al cerrar o descartar la ventana de edición. Si la nota se deja vacía o solo con espacios, el sistema la limpia y elimina automáticamente.
-* **Caché y aceleración en RAM (`/dev/shm`):** Construye y consulta el mapa de notas directamente en memoria para ofrecer tiempos de búsqueda e interacciones instantáneas.
+* **Caché y aceleración en RAM (`/dev/shm`):** Construye y consulta el mapa de notas directamente en memoria para ofrecer tiempos de búsqueda e interacciones con tiempos de espera minimos.
 * **Verificación por Flag atómico:** Controla la actualización de la caché en RAM mediante banderas en `/dev/shm` en apenas ~0.05 ms, evitando lecturas innecesarias en disco.
 * **Búsqueda avanzada:** Soporta operadores lógicos (`AND` / `OR`), distinción de mayúsculas/minúsculas y coincidencias por palabra exacta sobre el contenido de las notas.
 * **Ordenamiento dinámico por sesión (LRU + btime):** Mantiene en las primeras posiciones las notas creadas, editadas o consultadas recientemente durante la sesión activa.
