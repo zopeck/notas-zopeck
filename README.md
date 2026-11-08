@@ -19,9 +19,10 @@ Puedes instalar el paquete precompilado descargando la última versión desde lo
 ```bash
 sudo dpkg -i notas-zopeck_1.0-1_amd64.deb
 sudo apt-get install -f # para resolver dependencias si fuera necesario
+```
 
 
 ## Autor
-**Mark**  
+**Mark**
 *Marco A. Rodriguez G.*
 
