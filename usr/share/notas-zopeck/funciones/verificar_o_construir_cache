@@ -1,0 +1,35 @@
+# Verifica o construye la cache (Optimizado por Flag en RAM)
+
+verificar_o_construir_cache() {
+    local flag_nueva="/dev/shm/notas_zopeck_flag_nueva_${USER}.tmp"
+
+    # 1. Si la caché no existe o está en construcción, construirla
+    if [ ! -s "$CACHE_MAPA" ] || [ -f "${CACHE_MAPA}.building" ]; then
+        if [ ! -f "${CACHE_MAPA}.building" ]; then
+            generar_mapa_ram
+            rm -f "$flag_nueva"
+            return 0
+        fi
+
+        local reintentos=0
+        while [ ! -s "$CACHE_MAPA" ] || [ -f "${CACHE_MAPA}.building" ]; do
+            sleep 0.1
+            reintentos=$((reintentos + 1))
+            if [ $reintentos -gt 50 ]; then
+                rm -f "${CACHE_MAPA}.building"
+                generar_mapa_ram
+                rm -f "$flag_nueva"
+                break
+            fi
+        done
+        return 0
+    fi
+
+    # 2. Comprobación instantánea del Flag en RAM (0.05 ms)
+    if [ -f "$flag_nueva" ]; then
+        generar_mapa_ram
+        rm -f "$flag_nueva"
+    fi
+
+    return 0
+}

@@ -1,0 +1,10 @@
+Package: notas-zopeck
+Version: 1.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Mark <zopeck@gmail.com>
+Depends: bash (>= 4.0), yad, rsync, coreutils, findutils, gawk, procps
+Description: Sistema ultrarrápido de búsqueda y gestión de notas personales.
+ Notas Zopeck es una herramienta liviana impulsada por eventos, precarga en RAM
+ en /dev/shm y ordenamiento dinámico por sesión, diseñada para entornos GNU/Linux.

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Función: autoguardar_nota_zopeck (v10.1 - Guardado y Registro LRU)
+# Descripción: Procesa y guarda el contenido de la nota al cerrar YAD,
+#              actualizando la bandera de RAM y registrándola en la sesión.
+# ==============================================================================
+
+autoguardar_nota_zopeck() {
+    local contenido_nuevo="$1"
+    local dest_file="$2"
+    local user_flag="/dev/shm/notas_zopeck_flag_nueva_${USER}.tmp"
+    local sesion_recientes="/tmp/notas_zopeck_recientes_${USER}.tmp"
+
+    # Verificamos si hay texto real (eliminando espacios/saltos)
+    local texto_limpio
+    texto_limpio=$(echo "$contenido_nuevo" | xargs 2>/dev/null)
+
+    if [ -n "$texto_limpio" ]; then
+        # Guardar contenido en la nota definitiva
+        printf '%s\n' "$contenido_nuevo" > "$dest_file"
+        touch "$user_flag"
+        
+        # ----------------------------------------------------------------------
+        # SOLUCIÓN: Registrar de inmediato en la sesión activa (LRU)
+        # ----------------------------------------------------------------------
+        # Para que aparezca en el TOP 1 de "Últimas 20", simulamos que ya fue vista.
+        
+        # Primero, eliminamos cualquier ocurrencia previa (por seguridad)
+        grep -v -F "$dest_file" "$sesion_recientes" 2>/dev/null > "${sesion_recientes}.tmp"
+        
+        # Colocamos la nota nueva al principio de la pila (TOP 1)
+        echo "$dest_file" > "$sesion_recientes"
+        
+        # Añadimos el resto de la sesión y limpiamos
+        cat "${sesion_recientes}.tmp" >> "$sesion_recientes"
+        rm -f "${sesion_recientes}.tmp"
+        
+    else
+        # Si quedó vacía o solo con espacios, se elimina
+        rm -f "$dest_file"
+        touch "$user_flag"
+        
+        # Opcional: Eliminar de la sesión si existía y quedó vacía
+        grep -v -F "$dest_file" "$sesion_recientes" 2>/dev/null > "${sesion_recientes}.tmp"
+        mv "${sesion_recientes}.tmp" "$sesion_recientes"
+    fi
+}

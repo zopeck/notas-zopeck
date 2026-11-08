@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Notas Zopeck
+Comment=Sistema ultrarrápido de búsqueda y gestión de notas personales
+Exec=/usr/local/bin/notas-zopeck-tray.sh
+Icon=notas_bw
+Terminal=false
+Categories=Utility;TextEditor;

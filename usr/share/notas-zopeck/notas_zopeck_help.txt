@@ -1,0 +1,32 @@
+<b>======================================================================
+                     NOTAS ZOPECK - GUÍA DE USO
+======================================================================</b>
+
+<b>1. BÚSQUEDA INTERACTIVA:</b>
+   - Haz clic izquierdo sobre el icono de la bandeja para abrir el buscador.
+   - Escribe el texto que deseas buscar. La búsqueda filtrará el contenido
+     de todas las notas almacenadas.
+   - Puedes ingresar palabras sueltas e indicar que la busqueda deba
+     incluir resultados de ALGUNA de las palabras, o de TODAS las
+     palabras a la vez, para eso utiliza la ventana deplegable con los
+     operadores logicos "O" y "Y" respectivamente.  
+   
+<b>2. ACCESOS RÁPIDOS (MENÚ CONTEXTUAL):</b>
+   - Clic derecho en el icono del tray para ver las opciones avanzadas:
+     * Mostrar las últimas 20 notas (ordenadas por fecha de modificación).
+     * Mostrar el listado completo de notas.
+     * Crear una nota nueva.
+
+<b>3. SELECCIÓN MÚLTIPLE Y GESTIÓN EN LISTAS:</b>
+   - En las ventanas de resultados puedes seleccionar varias notas a la vez:
+     * Ctrl + Clic: Selecciona notas individuales discontinuas.
+     * Shift + Clic: Selecciona un rango continuo de notas.
+   - Al presionar 'Borrar', el sistema confirmará la eliminación en lote.
+
+<b>4. UBICACIÓN DE LAS NOTAS:</b>
+   - Todas tus notas se guardan en formato de texto plano en:
+     ~/.local/share/notas/
+
+<b>======================================================================</b>
+
+Presiona la tecla "esc" (o "Esc") para cerrar esta ventana...

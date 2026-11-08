@@ -1,0 +1,18 @@
+# ------------------------------------------------------------------------------
+# 2. Funciones de Carga de Notas (Optimizado con mapfile en C)
+# ------------------------------------------------------------------------------
+cargar_todas_las_notas() {
+    local limite="${1:-100}"
+    RESULTADOS=()
+    TODAS_RUTAS=()
+
+    [ ! -f "$CACHE_MAPA" ] && return 1
+
+    if [ "$limite" = "todas" ]; then
+        mapfile -t RESULTADOS < <(awk -F'|' '$6 != "" { print $2; print $3; print $4; print $5; print $6 }' "$CACHE_MAPA")
+        mapfile -t TODAS_RUTAS < <(awk -F'|' '$6 != "" { print $6 }' "$CACHE_MAPA")
+    else
+        mapfile -t RESULTADOS < <(head -n "$limite" "$CACHE_MAPA" | awk -F'|' '$6 != "" { print $2; print $3; print $4; print $5; print $6 }')
+        mapfile -t TODAS_RUTAS < <(head -n "$limite" "$CACHE_MAPA" | awk -F'|' '$6 != "" { print $6 }')
+    fi
+}

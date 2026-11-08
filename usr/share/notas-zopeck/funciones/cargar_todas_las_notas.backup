@@ -1,0 +1,25 @@
+# ------------------------------------------------------------------------------
+# 2. Funciones de Carga de Notas (Corregido a 5 campos exactos)
+# ------------------------------------------------------------------------------
+cargar_todas_las_notas() {
+    local limite="${1:-100}"
+    RESULTADOS=()
+    TODAS_RUTAS=()
+
+    [ ! -f "$CACHE_MAPA" ] && return 1
+
+    local datos_procesados
+    if [ "$limite" = "todas" ]; then
+        datos_procesados=$(awk -F'|' '$6 != "" { print $2; print $3; print $4; print $5; print $6 }' "$CACHE_MAPA")
+    else
+        datos_procesados=$(head -n "$limite" "$CACHE_MAPA" | awk -F'|' '$6 != "" { print $2; print $3; print $4; print $5; print $6 }')
+    fi
+
+    [ -z "$datos_procesados" ] && return 0
+
+    while IFS= read -r base && IFS= read -r titulo && IFS= read -r creado && IFS= read -r modificado && IFS= read -r ruta; do
+        [ -z "$ruta" ] && continue
+        RESULTADOS+=("$base" "$titulo" "$creado" "$modificado" "$ruta")
+        TODAS_RUTAS+=("$ruta")
+    done <<< "$datos_procesados"
+}

@@ -1,0 +1,197 @@
+source /usr/share/notas-zopeck/funciones/autoguardar_nota_zopeck
+source /usr/share/notas-zopeck/funciones/verificar_instancia_activa
+
+# ------------------------------------------------------------------------------
+# 3. Interfaz Principal de Listado
+# ------------------------------------------------------------------------------
+mostrar_lista_yad() {
+    local titulo_ventana="$1"
+    local max_items="$2"
+    local es_busqueda="$3"
+    local texto_info_extra="$4"
+
+    local modo_limite="$max_items"
+
+    if [ "$es_busqueda" != "si" ]; then
+        cargar_todas_las_notas "$modo_limite"
+    fi
+
+    while true; do
+        local total_notas_sistema
+        if [ -f "$CACHE_MAPA" ]; then
+            total_notas_sistema=$(wc -l < "$CACHE_MAPA")
+        else
+            total_notas_sistema=${#TODAS_RUTAS[@]}
+        fi
+
+        local RECIENTES=()
+        if [ -f "$SESION_RECIENTES" ] && [ -s "$SESION_RECIENTES" ]; then
+            mapfile -t RECIENTES < "$SESION_RECIENTES"
+        fi
+
+        if [ ${#RECIENTES[@]} -gt 0 ] && [ ${#RESULTADOS[@]} -gt 0 ]; then
+            reordenar_resultados_sesion RECIENTES TODAS_RUTAS
+        fi
+
+        local total_mostradas=$(( ${#RESULTADOS[@]} / 5 ))
+        
+        # BARRA DE ESTADO DINÁMICA
+        local texto_encabezado
+        if [ "$modo_limite" = "20" ]; then
+            texto_encabezado="<b>Total notas en el sistema:</b> <span foreground='#2e7d32'><b>$total_notas_sistema</b></span> | <b>Mostrando ultimas:</b> <span foreground='#2e7d32'><b>$total_mostradas</b></span>"
+        else
+            texto_encabezado="<b>Total notas en el sistema:</b> <span foreground='#2e7d32'><b>$total_notas_sistema</b></span> | <b>Mostrando:</b> <span foreground='#2e7d32'><b>$total_mostradas</b></span>"
+        fi
+
+        [ -n "$texto_info_extra" ] && texto_encabezado="$texto_encabezado\n$texto_info_extra"
+
+        [ ${#RESULTADOS[@]} -eq 0 ] && {
+            yad --info --title="Notas Zopeck" --text="No se encontraron notas." --button="Aceptar:0"
+            break
+        }
+
+        local botones_args=()
+        if [ "$es_busqueda" = "si" ]; then
+            botones_args+=(--button="Nueva Búsqueda:16")
+        fi
+
+        botones_args+=(
+            --button="Ver:10"
+            --button="Editar:12"
+            --button="Borrar:14"
+            --button="Cerrar:1"
+        )
+
+        SELECCION=$(yad --list \
+            --title="$titulo_ventana" \
+            --text="$texto_encabezado" \
+            --window-icon="document-open" \
+            --search-column=2 \
+            --width=950 --height=520 --center \
+            --column="Archivo:TEXT" \
+            --column="Título / Primera Línea:TEXT" \
+            --column="Creado:TEXT" \
+            --column="Modificado:TEXT" \
+            --column="Ruta:HD" \
+            "${RESULTADOS[@]}" \
+            "${botones_args[@]}")
+
+        local codigo_boton=$?
+        [ $codigo_boton -eq 1 ] || [ $codigo_boton -eq 252 ] || [ -z "$SELECCION" ] && break
+
+        if [ $codigo_boton -eq 16 ]; then
+            buscar_texto_formulario
+            break
+        fi
+
+        RUTA_SELECCIONADA=$(echo "$SELECCION" | awk -F'|' '{print $5}')
+        [ -f "$RUTA_SELECCIONADA" ] || continue
+
+        # Registrar en recientes LRU
+        grep -v -F "$RUTA_SELECCIONADA" "$SESION_RECIENTES" 2>/dev/null > "${SESION_RECIENTES}.tmp"
+        echo "$RUTA_SELECCIONADA" > "$SESION_RECIENTES"
+        cat "${SESION_RECIENTES}.tmp" >> "$SESION_RECIENTES"
+        rm -f "${SESION_RECIENTES}.tmp"
+
+        case "$codigo_boton" in
+            10) # VER
+                if verificar_instancia_activa "$RUTA_SELECCIONADA"; then
+                    continue
+                fi
+
+                yad --text-info --wrap \
+                    --title="Viendo: $(basename "$RUTA_SELECCIONADA")" \
+                    --filename="$RUTA_SELECCIONADA" \
+                    --width=700 --height=500 --center \
+                    --button="Cerrar:0"
+                ;;
+
+            12|0) # EDITAR
+                if verificar_instancia_activa "$RUTA_SELECCIONADA"; then
+                    continue
+                fi
+
+                CONTENIDO_EDITADO=$(yad --text-info --wrap \
+                    --title="Editando: $(basename "$RUTA_SELECCIONADA")" \
+                    --filename="$RUTA_SELECCIONADA" \
+                    --width=700 --height=500 --center \
+                    --editable \
+                    --button="Cerrar:0")
+
+                if [ $? -eq 0 ] || [ $? -eq 252 ]; then
+                    autoguardar_nota_zopeck "$CONTENIDO_EDITADO" "$RUTA_SELECCIONADA"
+
+                    if [ -f "$RUTA_SELECCIONADA" ]; then
+                        NUEVO_TITULO=$(head -n 1 "$RUTA_SELECCIONADA" | sed 's/\r//g' | xargs)
+                        [ -z "$NUEVO_TITULO" ] && NUEVO_TITULO="(Nota vacía)"
+                        NUEVO_MTIME_ISO=$(date -r "$RUTA_SELECCIONADA" +"%Y-%m-%d %H:%M")
+
+                        if [ -f "$CACHE_MAPA" ]; then
+                            awk -F'|' -v ruta="$RUTA_SELECCIONADA" -v t="$NUEVO_TITULO" -v m="$NUEVO_MTIME_ISO" \
+                                'BEGIN {OFS="|"} $6 == ruta {$3 = t; $5 = m} {print}' "$CACHE_MAPA" > "${CACHE_MAPA}.tmp"
+                            mv "${CACHE_MAPA}.tmp" "$CACHE_MAPA"
+                        fi
+
+                        for ((idx=0; idx<${#RESULTADOS[@]}; idx+=5)); do
+                            if [ "${RESULTADOS[idx+4]}" == "$RUTA_SELECCIONADA" ]; then
+                                RESULTADOS[idx+1]="$NUEVO_TITULO"
+                                RESULTADOS[idx+3]="$NUEVO_MTIME_ISO"
+                                break
+                            fi
+                        done
+                    fi
+                fi
+                ;;
+
+            14) # BORRAR
+                TITULO_COMPLETO=$(echo "$SELECCION" | awk -F'|' '{print $2}')
+                ARCHIVO_SELECCIONADO=$(basename "$RUTA_SELECCIONADA")
+
+                local titulo_mostrar="$TITULO_COMPLETO"
+                if [ ${#titulo_mostrar} -gt 45 ]; then
+                    titulo_mostrar="${titulo_mostrar:0:42}..."
+                fi
+
+                yad --image="dialog-warning" \
+                    --title="Confirmar eliminación" \
+                    --width=500 --center \
+                    --text="¿Está seguro de borrar la nota?\n\n<b>Archivo:</b> $ARCHIVO_SELECCIONADO\n<b>Título:</b> <i>$titulo_mostrar</i>" \
+                    --button="Sí, eliminar:0" \
+                    --button="Cancelar:1"
+
+                if [ $? -eq 0 ]; then
+                    rm -f "$RUTA_SELECCIONADA"
+                    grep -v -F "$RUTA_SELECCIONADA" "$SESION_RECIENTES" 2>/dev/null > "${SESION_RECIENTES}.tmp"
+                    mv "${SESION_RECIENTES}.tmp" "$SESION_RECIENTES"
+
+                    if [ -f "$CACHE_MAPA" ]; then
+                        grep -v -F "|$RUTA_SELECCIONADA" "$CACHE_MAPA" > "${CACHE_MAPA}.tmp"
+                        mv "${CACHE_MAPA}.tmp" "$CACHE_MAPA"
+                    fi
+
+                    NUEVOS_RESULTADOS=()
+                    for ((idx=0; idx<${#RESULTADOS[@]}; idx+=5)); do
+                        if [ "${RESULTADOS[idx+4]}" != "$RUTA_SELECCIONADA" ]; then
+                            NUEVOS_RESULTADOS+=(
+                                "${RESULTADOS[idx]}"
+                                "${RESULTADOS[idx+1]}"
+                                "${RESULTADOS[idx+2]}"
+                                "${RESULTADOS[idx+3]}"
+                                "${RESULTADOS[idx+4]}"
+                            )
+                        fi
+                    done
+                    RESULTADOS=("${NUEVOS_RESULTADOS[@]}")
+
+                    if [ "$es_busqueda" != "si" ]; then
+                        NUEVAS_RUTAS=()
+                        for r in "${TODAS_RUTAS[@]}"; do
+                            [ "$r" != "$RUTA_SELECCIONADA" ] && NUEVAS_RUTAS+=("$r")
+                        done
+                        TODAS_RUTAS=("${NUEVAS_RUTAS[@]}")
+                    fi
+                fi
+                ;;
+        esac
+    done
+}

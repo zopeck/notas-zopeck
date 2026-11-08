@@ -1,0 +1,23 @@
+# Función para verificar si la nota ya está abierta en el visor/editor
+verificar_instancia_activa() {
+    local ruta_absoluta="$1"
+    local nombre_archivo
+    nombre_archivo=$(basename "$ruta_absoluta")
+
+    if pgrep -f "yad --text-info.*--filename=$ruta_absoluta" >/dev/null 2>&1; then
+        if command -v wmctrl >/dev/null 2>&1; then
+            wmctrl -F -a "Viendo: $nombre_archivo" 2>/dev/null
+            wmctrl -F -a "Editando: $nombre_archivo" 2>/dev/null
+        fi
+
+        yad --warning \
+            --title="Nota ya abierta" \
+            --text="La nota <b>$nombre_archivo</b> ya está abierta en el visor." \
+            --width=400 --center --on-top \
+            --timeout=3 --timeout-indicator=bottom \
+            --button="Aceptar:0" >/dev/null 2>&1
+        
+        return 0 # Indica que ya estaba abierta
+    fi
+    return 1 # Indica que está libre para abrirse
+}

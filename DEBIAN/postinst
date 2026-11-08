@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+# Actualizar base de datos de iconos y permisos si aplica
+[ -x /usr/bin/update-desktop-database ] && update-desktop-database -q || true
+
+update-desktop-database -q
+
+echo "✔ Notas Zopeck instalado correctamente en el sistema."
+exit 0

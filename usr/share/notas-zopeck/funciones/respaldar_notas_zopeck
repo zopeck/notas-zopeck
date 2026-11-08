@@ -1,0 +1,376 @@
+# ==============================================================================
+# Función: respaldar_notas_zopeck
+# Descripción: Respaldo inteligente con espera activa, detección de medios de
+#              mayor rendimiento (Smart Speed Upgrade) configurable mediante
+#              USE_FASTER_MEDIA en ~/.config/notas_zopeck.conf y timeout automático.
+# ==============================================================================
+
+# Helper compartido: identifica el DISCO FÍSICO (fabricante, modelo, tamaño total, S/N)
+source "/usr/share/notas-zopeck/funciones/info_dispositivo_zopeck"
+
+# Función auxiliar extraída a nivel de archivo (fuera de la función principal)
+_zopeck_esperar_preferido() {
+    local destino_pref="$1"
+    for ((i=1; i<=60; i++)); do
+        echo "$((i * 100 / 60))"
+        echo "# Esperando conexión del dispositivo preferido ($i / 60 s)..."
+
+        if [ -d "$destino_pref" ] && timeout 2 test -w "$destino_pref"; then
+            echo "100"
+            echo "# ¡Dispositivo preferido detectado correctamente!"
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+respaldar_notas_zopeck() {
+    local NOTAS_DIR="${HOME}/.local/share/notas-zopeck"
+    local CONFIG_FILE="${HOME}/.config/notas_zopeck.conf"
+    local HISTORIAL_FILE="${HOME}/.config/zopeck_bk_historial.log"
+    local PREFERIDO_FILE="${HOME}/.config/zopeck_bk_preferido.conf"
+    local UID_USER
+    UID_USER=$(id -u)
+
+    touch "$HISTORIAL_FILE"
+
+    # --- Leer o inicializar archivo de configuración ---
+    local USE_FASTER_MEDIA="true"
+    if [ -f "$CONFIG_FILE" ]; then
+        local cfg_val
+        cfg_val=$(grep -i '^USE_FASTER_MEDIA=' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' "\r')
+        [ -n "$cfg_val" ] && USE_FASTER_MEDIA="$cfg_val"
+    fi
+
+    # Helper interno para actualizar una variable en el archivo de configuración
+    _zopeck_guardar_config() {
+        local clave="$1" valor="$2"
+        mkdir -p "$(dirname "$CONFIG_FILE")"
+        if [ -f "$CONFIG_FILE" ] && grep -q "^${clave}=" "$CONFIG_FILE"; then
+            sed -i "s/^${clave}=.*/${clave}=${valor}/" "$CONFIG_FILE"
+        else
+            echo "${clave}=${valor}" >> "$CONFIG_FILE"
+        fi
+    }
+
+    # 1. Métricas de origen
+    local TAMANO_NOTAS_BYTES
+    TAMANO_NOTAS_BYTES=$(du -sb "$NOTAS_DIR" 2>/dev/null | awk '{print $1}')
+    [ -z "$TAMANO_NOTAS_BYTES" ] && TAMANO_NOTAS_BYTES=0
+
+    local TAMANO_NOTAS_KB=$(( (TAMANO_NOTAS_BYTES + 1023) / 1024 ))
+    local TAMANO_NOTAS_HUMANO
+    TAMANO_NOTAS_HUMANO=$(numfmt --to=iec-i --suffix=B "$TAMANO_NOTAS_BYTES")
+
+    local CANTIDAD_NOTAS
+    CANTIDAD_NOTAS=$(find "$NOTAS_DIR" -type f -name "*.txt" 2>/dev/null | wc -l)
+
+    # --- Función interna para escanear el almacenamiento ---
+    local DESTINO_MAS_RAPIDO=""
+    local MEJOR_TIEMPO=99999999
+    local MEJOR_ESPACIO=0
+    local INFO_DISP_RAPIDO=""
+    local TIPO_DISP_RAPIDO=""
+
+    local DESTINO_PREFERIDO=""
+    [ -f "$PREFERIDO_FILE" ] && DESTINO_PREFERIDO=$(cat "$PREFERIDO_FILE" | xargs | sed 's#/$##')
+
+    local PREFERIDO_DISPONIBLE=0
+    local TIEMPO_PREFERIDO=99999999
+    local ESPACIO_PREFERIDO=0
+    local INFO_DISP_PREFERIDO=""
+    local TIPO_DISP_PREFERIDO=""
+
+    escanear_medios() {
+        DESTINO_MAS_RAPIDO=""
+        MEJOR_TIEMPO=99999999
+        MEJOR_ESPACIO=0
+        INFO_DISP_RAPIDO=""
+        TIPO_DISP_RAPIDO=""
+        PREFERIDO_DISPONIBLE=0
+
+        local RUTAS_BUSQUEDA=(
+            "/run/user/${UID_USER}/gvfs"/*
+            /media/"${USER}"/*
+            /run/media/"${USER}"/*
+            /mnt/*
+            "${HOME}"/mnt/*
+        )
+
+        while read -r _ mnt_dir fs_type _; do
+            case "$fs_type" in
+                fuse.sshfs|cifs|smbfs|nfs|nfs4|fuse.gvfsd-fuse|ext4|vfat|exfat|ntfs)
+                    if [ "$mnt_dir" != "/" ] && [ "$mnt_dir" != "${HOME}" ] && [ -d "$mnt_dir" ]; then
+                        RUTAS_BUSQUEDA+=("$mnt_dir")
+                    fi
+                    ;;
+            esac
+        done < /proc/mounts
+
+        declare -A VISTOS
+        for punto in "${RUTAS_BUSQUEDA[@]}"; do
+            [ -n "${VISTOS[$punto]}" ] && continue
+            VISTOS["$punto"]=1
+
+            if [ -d "$punto" ] && timeout 2 test -w "$punto"; then
+                local espacio_disponible_kb
+                espacio_disponible_kb=$(timeout 2 df -k "$punto" 2>/dev/null | awk 'NR==2 {print $4}')
+
+                if [ -n "$espacio_disponible_kb" ] && [ "$espacio_disponible_kb" -gt "$TAMANO_NOTAS_KB" ]; then
+                    local test_file="${punto}/.zopeck_speed_test_${USER}.tmp"
+                    local inicio fin tiempo_ms
+
+                    inicio=$(date +%s%N)
+                    if timeout 2 dd if=/dev/zero of="$test_file" bs=64k count=8 conv=fdatasync status=none 2>/dev/null; then
+                        fin=$(date +%s%N)
+                        rm -f "$test_file"
+
+                        tiempo_ms=$(( (fin - inicio) / 1000000 ))
+                        
+                        local hw_raw info_hw tipo_hw
+                        hw_raw=$(zopeck_info_dispositivo "$punto")
+                        IFS='#' read -r tipo_hw info_hw <<< "$hw_raw"
+
+                        local punto_limpio
+                        punto_limpio=$(echo "$punto" | xargs | sed 's#/$##')
+
+                        if [ -n "$DESTINO_PREFERIDO" ] && [ "$punto_limpio" == "$DESTINO_PREFERIDO" ]; then
+                            PREFERIDO_DISPONIBLE=1
+                            TIEMPO_PREFERIDO=$tiempo_ms
+                            ESPACIO_PREFERIDO=$espacio_disponible_kb
+                            INFO_DISP_PREFERIDO=$info_hw
+                            TIPO_DISP_PREFERIDO=$tipo_hw
+                        fi
+
+                        if [ "$tiempo_ms" -lt "$MEJOR_TIEMPO" ]; then
+                            MEJOR_TIEMPO=$tiempo_ms
+                            MEJOR_ESPACIO=$espacio_disponible_kb
+                            DESTINO_MAS_RAPIDO="$punto"
+                            INFO_DISP_RAPIDO=$info_hw
+                            TIPO_DISP_RAPIDO=$tipo_hw
+                        fi
+                    else
+                        rm -f "$test_file" 2>/dev/null
+                    fi
+                fi
+            fi
+        done
+    }
+
+    # Primer escaneo
+    escanear_medios
+
+    # 2. Evaluación de disponibilidad y decisiones
+    local DESTINO_FINAL=""
+    local TIEMPO_FINAL=0
+    local ESPACIO_FINAL=0
+    local INFO_FINAL=""
+    local NOTA_VELOCIDAD=""
+    local OFRECER_CAMBIO_PREFERIDO=0
+    local USAR_TIMEOUT_AUTOMATICO=0
+
+    # Si hay un preferido guardado pero no está conectado en este instante
+    if [ -n "$DESTINO_PREFERIDO" ] && [ "$PREFERIDO_DISPONIBLE" -eq 0 ]; then
+        yad --question \
+            --title="Dispositivo Preferido Ausente" \
+            --text="<b>El dispositivo preferido no está conectado.</b>\n\n<b>Ubicación Esperada:</b> $DESTINO_PREFERIDO\n\nConecte el dispositivo y presione <b>'Conectar preferido y Respaldar'</b> para continuar." \
+            --image="dialog-warning" \
+            --width=650 --center \
+            --button="Usar Otro Medio Detectado:1" \
+            --button="Conectar Preferido y Respaldar:0"
+
+        local RESPUESTA=$?
+
+        if [ $RESPUESTA -eq 0 ]; then
+            _zopeck_esperar_preferido "$DESTINO_PREFERIDO" | yad --progress \
+                --title="Esperando Dispositivo..." \
+                --progress-text="Conecte su medio de almacenamiento preferido..." \
+                --percentage=0 \
+                --auto-close \
+                --width=450 --center \
+                --button="Cancelar:1"
+
+            if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                escanear_medios
+                if [ "$PREFERIDO_DISPONIBLE" -eq 1 ]; then
+                    DESTINO_FINAL="$DESTINO_PREFERIDO"
+                    TIEMPO_FINAL=$TIEMPO_PREFERIDO
+                    ESPACIO_FINAL=$ESPACIO_PREFERIDO
+                    INFO_FINAL=$INFO_DISP_PREFERIDO
+                    USAR_TIMEOUT_AUTOMATICO=1
+                fi
+            else
+                yad --error \
+                    --title="Tiempo de Espera Agotado" \
+                    --text="No se detectó el dispositivo preferido a tiempo." \
+                    --width=400 --center --button="Aceptar:0"
+                return 1
+            fi
+        else
+            if [ -n "$DESTINO_MAS_RAPIDO" ]; then
+                DESTINO_FINAL="$DESTINO_MAS_RAPIDO"
+                TIEMPO_FINAL=$MEJOR_TIEMPO
+                ESPACIO_FINAL=$MEJOR_ESPACIO
+                INFO_FINAL=$INFO_DISP_RAPIDO
+            else
+                yad --error \
+                    --title="Sin Medios Disponibles" \
+                    --text="No se encontró ningún otro medio alternativo disponible." \
+                    --width=400 --center --button="Aceptar:0"
+                return 1
+            fi
+        fi
+
+    # Si el preferido ya estaba conectado desde el inicio
+    elif [ "$PREFERIDO_DISPONIBLE" -eq 1 ]; then
+        local destino_pref_limpio
+        destino_pref_limpio=$(echo "$DESTINO_PREFERIDO" | xargs | sed 's#/$##')
+        local destino_rapido_limpio
+        destino_rapido_limpio=$(echo "$DESTINO_MAS_RAPIDO" | xargs | sed 's#/$##')
+
+        # Evaluación Smart Speed Upgrade (solo si USE_FASTER_MEDIA es true)
+        if [ "$USE_FASTER_MEDIA" = "true" ] && [ "$destino_pref_limpio" != "$destino_rapido_limpio" ] && [ -n "$DESTINO_MAS_RAPIDO" ]; then
+            if [ "$TIPO_DISP_PREFERIDO" = "Remoto" ] && [ "$TIPO_DISP_RAPIDO" = "Local" ] || [ $TIEMPO_PREFERIDO -ge $((MEJOR_TIEMPO * 3)) ]; then
+                DESTINO_FINAL="$DESTINO_MAS_RAPIDO"
+                TIEMPO_FINAL=$MEJOR_TIEMPO
+                ESPACIO_FINAL=$MEJOR_ESPACIO
+                INFO_FINAL=$INFO_DISP_RAPIDO
+                OFRECER_CAMBIO_PREFERIDO=1
+                
+                NOTA_VELOCIDAD="\n\n<span foreground='#1b5e20'><b>⚡ Selección Inteligente de Alto Rendimiento:</b></span>\nSe ha seleccionado este medio por ser considerablemente más rápido que su destino preferido ($TIPO_DISP_PREFERIDO, ${TIEMPO_PREFERIDO} ms)."
+            else
+                DESTINO_FINAL="$DESTINO_PREFERIDO"
+                TIEMPO_FINAL=$TIEMPO_PREFERIDO
+                ESPACIO_FINAL=$ESPACIO_PREFERIDO
+                INFO_FINAL=$INFO_DISP_PREFERIDO
+                USAR_TIMEOUT_AUTOMATICO=1
+            fi
+        else
+            # Si USE_FASTER_MEDIA=false o no hay medio más rápido, usar el preferido directo
+            DESTINO_FINAL="$DESTINO_PREFERIDO"
+            TIEMPO_FINAL=$TIEMPO_PREFERIDO
+            ESPACIO_FINAL=$ESPACIO_PREFERIDO
+            INFO_FINAL=$INFO_DISP_PREFERIDO
+            USAR_TIMEOUT_AUTOMATICO=1
+        fi
+
+    # Si no hay preferido configurado, usar el más rápido
+    else
+        if [ -z "$DESTINO_MAS_RAPIDO" ]; then
+            yad --error \
+                --title="Sin Destino Disponible" \
+                --text="No se encontró ningún medio de almacenamiento disponible." \
+                --width=450 --center --button="Aceptar:0"
+            return 1
+        fi
+        DESTINO_FINAL="$DESTINO_MAS_RAPIDO"
+        TIEMPO_FINAL=$MEJOR_TIEMPO
+        ESPACIO_FINAL=$MEJOR_ESPACIO
+        INFO_FINAL=$INFO_DISP_RAPIDO
+    fi
+
+    # 3. Proceso de Sincronización
+    local CARPETA_DESTINO
+    CARPETA_DESTINO=$(echo "${DESTINO_FINAL}/zopecknotasbk" | sed 's#//#/#g' | sed 's#/$##')
+    local ESPACIO_HUMANO
+    ESPACIO_HUMANO=$(numfmt --to=iec-i --suffix=B $((ESPACIO_FINAL * 1024)))
+
+    local RESP_CONFIRM=0
+    local CHK_NO_OFRECER="FALSE"
+
+    if [ $OFRECER_CAMBIO_PREFERIDO -eq 1 ]; then
+        local FORM_OUT
+        FORM_OUT=$(yad --form \
+            --title="Iniciar Respaldo Zopeck" \
+            --image="drive-harddisk" \
+            --width=620 --center \
+            --text="<b>Detalles del Respaldo:</b>\n\n<b>Dispositivo:</b> $INFO_FINAL\n<b>Origen:</b> $NOTAS_DIR ($TAMANO_NOTAS_HUMANO, $CANTIDAD_NOTAS notas)\n<b>Destino:</b> $CARPETA_DESTINO\n<b>Espacio Libre:</b> $ESPACIO_HUMANO\n<b>Latencia:</b> ${TIEMPO_FINAL} ms${NOTA_VELOCIDAD}" \
+            --field="No volver a ofrecer un destino más rápido así esté disponible":CHK FALSE \
+            --button="Cancelar:1" \
+            --button="Usar Preferido (${TIEMPO_PREFERIDO} ms):2" \
+            --button="Respaldar en el más rápido:0")
+
+        RESP_CONFIRM=$?
+        CHK_NO_OFRECER=$(echo "$FORM_OUT" | awk -F'|' '{print $1}')
+
+        if [ "$CHK_NO_OFRECER" = "TRUE" ]; then
+            _zopeck_guardar_config "USE_FASTER_MEDIA" "false"
+        fi
+    else
+        local YAD_BUTTONS=(
+            --button="Cancelar:1"
+            --button="Iniciar Ahora:0"
+        )
+        local YAD_EXTRA_ARGS=()
+
+        if [ $USAR_TIMEOUT_AUTOMATICO -eq 1 ]; then
+            YAD_EXTRA_ARGS=(
+                --timeout=4
+                --timeout-indicator=bottom
+            )
+        fi
+
+        yad --question \
+            --title="Iniciar Respaldo Zopeck" \
+            --text="<b>Detalles del Respaldo:</b>\n\n<b>Dispositivo:</b> $INFO_FINAL\n<b>Origen:</b> $NOTAS_DIR ($TAMANO_NOTAS_HUMANO, $CANTIDAD_NOTAS notas)\n<b>Destino:</b> $CARPETA_DESTINO\n<b>Espacio Libre:</b> $ESPACIO_HUMANO\n<b>Latencia:</b> ${TIEMPO_FINAL} ms" \
+            --image="drive-harddisk" \
+            --width=620 --center \
+            "${YAD_EXTRA_ARGS[@]}" \
+            "${YAD_BUTTONS[@]}"
+
+        RESP_CONFIRM=$?
+    fi
+
+    if [ $RESP_CONFIRM -eq 2 ]; then
+        DESTINO_FINAL="$DESTINO_PREFERIDO"
+        TIEMPO_FINAL=$TIEMPO_PREFERIDO
+        ESPACIO_FINAL=$ESPACIO_PREFERIDO
+        INFO_FINAL=$INFO_DISP_PREFERIDO
+        CARPETA_DESTINO=$(echo "${DESTINO_FINAL}/zopecknotasbk" | sed 's#//#/#g' | sed 's#/$##')
+    elif [ $RESP_CONFIRM -ne 0 ] && [ $RESP_CONFIRM -ne 70 ]; then
+        return 0
+    fi
+
+    mkdir -p "$CARPETA_DESTINO"
+
+    # Sincronización rsync
+    stdbuf -i0 -o0 -e0 rsync -avz --info=progress2 --update --delete "$NOTAS_DIR/" "$CARPETA_DESTINO/" | \
+    tr '\r' '\n' | \
+    stdbuf -i0 -o0 -e0 awk '
+        match($0, /([0-9]+)%/, a) {
+            print a[1]
+            fflush()
+        }
+    ' | \
+    yad --progress \
+        --title="Respaldando Notas Zopeck..." \
+        --percentage=0 \
+        --auto-close \
+        --width=400 \
+        --center
+
+    # 4. Notificación y actualización unívoca de Historial
+    if [ ${PIPESTATUS[0]} -eq 0 ]; then
+        local FECHA_ACTUAL
+        FECHA_ACTUAL=$(date "+%Y-%m-%d %H:%M:%S")
+
+        if [ -f "$HISTORIAL_FILE" ]; then
+            grep -v "|${CARPETA_DESTINO}$" "$HISTORIAL_FILE" > "${HISTORIAL_FILE}.tmp" 2>/dev/null
+            mv "${HISTORIAL_FILE}.tmp" "$HISTORIAL_FILE"
+        fi
+
+        echo "${INFO_FINAL}|${FECHA_ACTUAL}|${CARPETA_DESTINO}" >> "$HISTORIAL_FILE"
+
+        yad --info \
+            --title="Respaldo Exitoso" \
+            --text="<b>¡Respaldo completado con éxito!</b>\n\n<b>Dispositivo:</b> $INFO_FINAL\n<b>Ubicación:</b> $CARPETA_DESTINO\n<b>Fecha:</b> $FECHA_ACTUAL" \
+            --image="dialog-information" \
+            --width=560 --height=260 --center --button="Aceptar:0"
+    else
+        yad --error \
+            --title="Respaldo Fallido" \
+            --text="<b>Error durante la sincronización con rsync.</b>" \
+            --width=400 --center --button="Aceptar:0"
+    fi
+}

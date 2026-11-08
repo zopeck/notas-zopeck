@@ -1,0 +1,46 @@
+# Genera mapa RAM de notas optimizado
+# 23sep2026 22:38
+
+# Genera mapa RAM de notas optimizado (Escritura atómica corregida)
+generar_mapa_ram() {
+    local tmp_mapa="${CACHE_MAPA}.building"
+    local raw_stat="/tmp/debug_stat_${USER}.tmp"
+
+    # Paso 1: Guardar la salida de 'stat'
+    find "$NOTAS_DIR" -maxdepth 1 -name "*.txt" -exec stat --format='%W|%Y|%n' {} + 2>/dev/null > "$raw_stat"
+
+    # Paso 2: Procesar con AWK directamente al archivo temporal
+    awk -F'|' '
+    {
+        btime_epoch = $1
+        mtime_epoch = $2
+        ruta        = $3
+
+        if (btime_epoch == "" || btime_epoch == 0 || btime_epoch == -1) {
+            btime_epoch = mtime_epoch
+        }
+
+        btime_iso = strftime("%Y-%m-%d %H:%M", btime_epoch)
+        mtime_iso = strftime("%Y-%m-%d %H:%M", mtime_epoch)
+
+        n = split(ruta, a, "/")
+        base = a[n]
+
+        primera_linea = "(Nota vacía)"
+        if ((getline linea < ruta) > 0) {
+            gsub(/\r/, "", linea)
+            gsub(/^[ \t]+|[ \t]+$/, "", linea)
+            if (linea != "") {
+                primera_linea = linea
+            }
+        }
+        close(ruta)
+
+        print btime_epoch "|" base "|" primera_linea "|" btime_iso "|" mtime_iso "|" ruta
+    }' "$raw_stat" | sort -t'|' -k1,1nr > "$tmp_mapa"
+
+    rm -f "$raw_stat"
+    
+    # Mover atómicamente: solo existirá CACHE_MAPA completo una vez finalizado todo el proceso
+    mv -f "$tmp_mapa" "$CACHE_MAPA"
+}

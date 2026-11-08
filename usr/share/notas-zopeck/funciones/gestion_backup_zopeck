@@ -1,0 +1,339 @@
+# ==============================================================================
+# Función: gestion_backup_zopeck
+# Descripción: Interfaz YAD para la gestión de respaldos.
+#   - Lista todos los destinos usados alguna vez (historial).
+#   - Permite fijar uno como "Preferido", eliminar su copia física
+#     o desvincular/olvidar un destino del registro local.
+#   - Gestión inteligente del preferido al olvidar: asigna automáticamente
+#     el único disponible o el más rápido/accesible con aviso por timeout.
+# ==============================================================================
+
+# Helper compartido: identifica el DISCO FÍSICO (fabricante, modelo, tamaño total, S/N)
+source "/usr/share/notas-zopeck/funciones/info_dispositivo_zopeck"
+
+# Quita saltos de línea y barras finales, SIN tocar espacios ni comillas internas
+_zopeck_limpiar_ruta() {
+    local r="$1"
+    r="${r//$'\r'/}"
+    r="${r//$'\n'/}"
+    while [[ "$r" == */ && "$r" != "/" ]]; do r="${r%/}"; done
+    printf '%s' "$r"
+}
+
+# Escapa el texto para usarlo dentro del marcado (Pango) de YAD
+_zopeck_esc() {
+    local t="$1"
+    t="${t//&/&amp;}"; t="${t//</&lt;}"; t="${t//>/&gt;}"
+    printf '%s' "$t"
+}
+
+# Reemplaza la descripción (campo 1) de la línea del historial cuya ruta (campo 3) coincide
+_zopeck_historial_actualizar_desc() {
+    local archivo="$1" ruta="$2" desc="$3"
+    awk -F'|' -v OFS='|' -v r="$ruta" -v d="$desc" '$3 == r { $1 = d } { print }' \
+        "$archivo" > "${archivo}.tmp" && mv "${archivo}.tmp" "$archivo"
+}
+
+# Quita del historial la línea cuya ruta (campo 3) coincide EXACTAMENTE
+_zopeck_historial_quitar() {
+    local archivo="$1" ruta="$2"
+    awk -F'|' -v r="$ruta" '$3 != r' \
+        "$archivo" > "${archivo}.tmp" && mv "${archivo}.tmp" "$archivo"
+}
+
+# Función auxiliar extraída a nivel de archivo (fuera de la función principal)
+_zopeck_reasingar_preferido_automatico() {
+    local HISTORIAL_FILE="$1" PREFERIDO_FILE="$2"
+    local cant_restantes
+    cant_restantes=$(grep -cv '^[[:space:]]*$' "$HISTORIAL_FILE" 2>/dev/null)
+
+    # Caso A: No quedan más destinos
+    if [ "${cant_restantes:-0}" -eq 0 ]; then
+        rm -f "$PREFERIDO_FILE"
+        yad --warning \
+            --title="Sin Destinos de Respaldo" \
+            --wrap \
+            --text="<b>Atención:</b> Ya no quedan destinos de respaldo registrados en Notas Zopeck.\n\nSe recomienda realizar un nuevo respaldo para proteger su información." \
+            --image="dialog-warning" \
+            --width=480 --center \
+            --timeout=7 --timeout-indicator=bottom \
+            --button="Aceptar:0"
+        return 0
+    fi
+
+    # Extraer rutas restantes
+    local rutas_restantes=()
+    local disp_restantes=()
+    while IFS='|' read -r d f r; do
+        [ -z "$r" ] && continue
+        rutas_restantes+=("$(_zopeck_limpiar_ruta "$r")")
+        disp_restantes+=("$d")
+    done < <(grep -v '^[[:space:]]*$' "$HISTORIAL_FILE")
+
+    local nueva_ruta_pref=""
+    local nuevo_nombre_pref=""
+
+    # Caso B: Queda exactamente un solo destino
+    if [ "${#rutas_restantes[@]}" -eq 1 ]; then
+        nueva_ruta_pref=$(dirname "${rutas_restantes[0]}")
+        nuevo_nombre_pref="${disp_restantes[0]}"
+    else
+        # Caso C: Quedan 2 o más destinos. Buscamos el más rápido/accesible actualmente.
+        local mejor_tiempo=99999999
+        local idx_mejor=-1
+
+        for idx in "${!rutas_restantes[@]}"; do
+            local dir_m
+            dir_m=$(dirname "${rutas_restantes[$idx]}")
+
+            if [ -d "$dir_m" ] && timeout 2 test -w "$dir_m"; then
+                local test_file="${dir_m}/.zopeck_speed_test_${USER}.tmp"
+                local inicio fin tiempo_ms
+
+                inicio=$(date +%s%N)
+                if timeout 2 dd if=/dev/zero of="$test_file" bs=64k count=8 conv=fdatasync status=none 2>/dev/null; then
+                    fin=$(date +%s%N)
+                    rm -f "$test_file" 2>/dev/null
+                    tiempo_ms=$(( (fin - inicio) / 1000000 ))
+
+                    if [ "$tiempo_ms" -lt "$mejor_tiempo" ]; then
+                        mejor_tiempo=$tiempo_ms
+                        idx_mejor=$idx
+                    fi
+                else
+                    rm -f "$test_file" 2>/dev/null
+                fi
+            fi
+        done
+
+        # Si ninguno estuvo accesible/conectado para prueba de velocidad, elegimos el último registrado
+        if [ $idx_mejor -lt 0 ]; then
+            idx_mejor=$(( ${#rutas_restantes[@]} - 1 ))
+        fi
+
+        nueva_ruta_pref=$(dirname "${rutas_restantes[$idx_mejor]}")
+        nuevo_nombre_pref="${disp_restantes[$idx_mejor]}"
+    fi
+
+    # Guardar nuevo preferido y notificar con timeout
+    printf '%s' "$nueva_ruta_pref" > "$PREFERIDO_FILE"
+
+    yad --info \
+        --title="Nuevo Destino Preferido" \
+        --wrap \
+        --text="El destino preferido anterior ya no está disponible.\n\nSe ha asignado automáticamente como nuevo preferido:\n<b>$(_zopeck_esc "$nuevo_nombre_pref")</b>\n<i>$(_zopeck_esc "$nueva_ruta_pref")</i>" \
+        --image="dialog-information" \
+        --width=520 --center \
+        --timeout=6 --timeout-indicator=bottom \
+        --button="Aceptar:0"
+}
+
+gestion_backup_zopeck() {
+    local HISTORIAL_FILE="${HOME}/.config/zopeck_bk_historial.log"
+    local PREFERIDO_FILE="${HOME}/.config/zopeck_bk_preferido.conf"
+    local OMITIR_AVISO_OLVIDAR_FILE="${HOME}/.config/zopeck_bk_omitir_aviso_olvidar.conf"
+
+    touch "$HISTORIAL_FILE"
+
+    while true; do
+        local LINEAS_HISTORIAL
+        LINEAS_HISTORIAL=$(grep -cv '^[[:space:]]*$' "$HISTORIAL_FILE" 2>/dev/null)
+
+        if [ "${LINEAS_HISTORIAL:-0}" -eq 0 ]; then
+            yad --info \
+                --wrap \
+                --title="Gestión de Backup Zopeck" \
+                --text="<b>No hay respaldos registrados en el historial todavía.</b>\n\nRealice un primer respaldo para registrar un dispositivo." \
+                --image="dialog-information" \
+                --width=420 --center --button="Aceptar:0"
+            return 0
+        fi
+
+        local PREFERIDO_ACTUAL=""
+        [ -f "$PREFERIDO_FILE" ] && PREFERIDO_ACTUAL=$(_zopeck_limpiar_ruta "$(cat "$PREFERIDO_FILE")")
+
+        # ---- Construcción de filas: Dispositivo | Tipo | Fecha | Estado | Preferido | Ruta
+        local FILAS=()
+        local disp fecha ruta ruta_limpia dir_montaje nombre_disp estado_actual hw_raw tipo_disp es_pref
+
+        while IFS='|' read -r disp fecha ruta; do
+            [ -z "$ruta" ] && continue
+
+            ruta_limpia=$(_zopeck_limpiar_ruta "$ruta")
+            dir_montaje=$(dirname "$ruta_limpia")
+
+            nombre_disp="$disp"
+            tipo_disp="Local"
+            estado_actual="Desconectado"
+
+            if [ -d "$dir_montaje" ]; then
+                estado_actual="Conectado"
+                if mountpoint -q "$dir_montaje" 2>/dev/null; then
+                    hw_raw=$(zopeck_info_dispositivo "$dir_montaje")
+                    if [ -n "$hw_raw" ]; then
+                        IFS='#' read -r tipo_disp nombre_disp <<< "$hw_raw"
+                        if [ "$nombre_disp" != "$disp" ]; then
+                            _zopeck_historial_actualizar_desc "$HISTORIAL_FILE" "$ruta_limpia" "$nombre_disp"
+                        fi
+                    fi
+                fi
+            fi
+            [ -z "$nombre_disp" ] && nombre_disp="(sin descripción)"
+
+            es_pref="No"
+            if [ -n "$PREFERIDO_ACTUAL" ]; then
+                if [ "$dir_montaje" = "$PREFERIDO_ACTUAL" ] || [ "$ruta_limpia" = "$PREFERIDO_ACTUAL" ]; then
+                    es_pref="SÍ (Preferido)"
+                fi
+            fi
+
+            FILAS+=("$nombre_disp" "$tipo_disp" "$fecha" "$estado_actual" "$es_pref" "$ruta_limpia")
+        done < <(grep -v '^[[:space:]]*$' "$HISTORIAL_FILE")
+
+        # ---- Paso 1: elegir la fila
+        local SELECCION RC
+        SELECCION=$(yad --list \
+            --title="Centro de Gestión de Respaldos Zopeck" \
+            --text="Seleccione un respaldo y pulse <b>Acciones</b> (o haga doble clic sobre la fila)." \
+            --column="Dispositivo":TEXT \
+            --column="Tipo":TEXT \
+            --column="Último Respaldo":TEXT \
+            --column="Estado":TEXT \
+            --column="Preferido":TEXT \
+            --column="Ruta Completa":TEXT \
+            --print-column=6 \
+            --width=1050 --height=420 --center \
+            --button="Cerrar:1" \
+            --button="Acciones sobre la fila…:0" \
+            "${FILAS[@]}")
+        RC=$?
+
+        # Cerrar (1), ESC / X de la ventana (252) u otro -> salir
+        [ $RC -eq 0 ] || break
+
+        # YAD agrega un '|' final al valor impreso
+        SELECCION=$(_zopeck_limpiar_ruta "${SELECCION%|}")
+
+        if [ -z "$SELECCION" ]; then
+            yad --warning \
+                --title="Atención" \
+                --text="Debe seleccionar una fila de la lista haciendo clic sobre ella antes de pulsar <b>Acciones</b>." \
+                --width=450 --center --button="Aceptar:0"
+            continue
+        fi
+
+        # Recupera los datos de la fila elegida
+        local i nombre_sel="" estado_sel=""
+        for ((i = 0; i < ${#FILAS[@]}; i += 6)); do
+            if [ "${FILAS[i+5]}" = "$SELECCION" ]; then
+                nombre_sel="${FILAS[i]}"
+                estado_sel="${FILAS[i+3]}"
+                break
+            fi
+        done
+        local dir_sel
+        dir_sel=$(dirname "$SELECCION")
+
+        # ---- Paso 2: elegir la acción
+        yad --question \
+            --title="Acción sobre el respaldo" \
+            --text="<b>Dispositivo:</b> $(_zopeck_esc "$nombre_sel")\n<b>Estado:</b> ${estado_sel}\n<b>Ruta:</b> $(_zopeck_esc "$SELECCION")\n\n¿Qué desea hacer?" \
+            --image="drive-harddisk" \
+            --width=600 --center \
+            --button="Cancelar:1" \
+            --button="Olvidar dispositivo:4" \
+            --button="Eliminar copia física:2" \
+            --button="Fijar como preferido:3"
+        local ACCION=$?
+
+        case $ACCION in
+            3)
+                printf '%s' "$dir_sel" > "$PREFERIDO_FILE"
+                yad --info \
+                    --title="Destino Preferido" \
+                    --text="Se fijó como preferido:\n\n<b>$(_zopeck_esc "$nombre_sel")</b>\n$(_zopeck_esc "$dir_sel")" \
+                    --width=450 --center --button="Aceptar:0"
+                ;;
+            2)
+                if [ ! -d "$SELECCION" ]; then
+                    yad --error \
+                        --title="Dispositivo No Disponible" \
+                        --text="No se encuentra la carpeta de respaldo. Asegúrese de que el dispositivo esté conectado.\n\n<b>Ruta:</b> $(_zopeck_esc "$SELECCION")" \
+                        --width=480 --center --button="Aceptar:0"
+                elif [ "$(basename "$SELECCION")" != "zopecknotasbk" ]; then
+                    yad --error \
+                        --title="Ruta no válida" \
+                        --text="Por seguridad solo se eliminan carpetas llamadas <b>zopecknotasbk</b>.\n\n<b>Ruta:</b> $(_zopeck_esc "$SELECCION")" \
+                        --width=480 --center --button="Aceptar:0"
+                else
+                    yad --question \
+                        --title="Confirmar Eliminación" \
+                        --text="<b>¿Está seguro de eliminar la carpeta de respaldo?</b>\n\n<b>Ruta:</b> $(_zopeck_esc "$SELECCION")" \
+                        --image="dialog-warning" \
+                        --width=480 --center \
+                        --button="Cancelar:1" \
+                        --button="Eliminar Definitivamente:0"
+
+                    if [ $? -eq 0 ]; then
+                        rm -rf -- "$SELECCION"
+                        _zopeck_historial_quitar "$HISTORIAL_FILE" "$SELECCION"
+                        
+                        if [ "$dir_sel" = "$PREFERIDO_ACTUAL" ] || [ "$SELECCION" = "$PREFERIDO_ACTUAL" ]; then
+                            _zopeck_reasingar_preferido_automatico "$HISTORIAL_FILE" "$PREFERIDO_FILE"
+                        else
+                            yad --info \
+                                --title="Copia Eliminada" \
+                                --text="La carpeta de respaldo se eliminó correctamente." \
+                                --width=420 --center --button="Aceptar:0"
+                        fi
+                    fi
+                fi
+                ;;
+            4)
+                local confirmar_olvidar=0
+
+                if [ -f "$OMITIR_AVISO_OLVIDAR_FILE" ] && [ "$(cat "$OMITIR_AVISO_OLVIDAR_FILE")" = "1" ]; then
+                    confirmar_olvidar=0
+                else
+                    local form_olvidar
+                    form_olvidar=$(yad --form \
+                        --wrap \
+                        --title="Olvidar dispositivo" \
+                        --image="dialog-warning" \
+                        --width=520 --center \
+                        --text="Por favor tenga en cuenta que esta acción solo eliminará el registro de este destino en Notas Zopeck, pero no borrará los datos reales, si por alguna razón el dispositivo o acceso remoto volviera a estar disponible..." \
+                        --field="No volver a recordar este aviso":CHK FALSE \
+                        --button="Cancelar:1" \
+                        --button="Olvidar dispositivo:0")
+                    
+                    confirmar_olvidar=$?
+                    
+                    if [ $confirmar_olvidar -eq 0 ]; then
+                        local chk_omitir
+                        chk_omitir=$(echo "$form_olvidar" | awk -F'|' '{print $1}')
+                        if [ "$chk_omitir" = "TRUE" ]; then
+                            echo "1" > "$OMITIR_AVISO_OLVIDAR_FILE"
+                        fi
+                    fi
+                fi
+
+                if [ $confirmar_olvidar -eq 0 ]; then
+                    _zopeck_historial_quitar "$HISTORIAL_FILE" "$SELECCION"
+
+                    if [ "$dir_sel" = "$PREFERIDO_ACTUAL" ] || [ "$SELEISSION" = "$PREFERIDO_ACTUAL" ]; then
+                        _zopeck_reasingar_preferido_automatico "$HISTORIAL_FILE" "$PREFERIDO_FILE"
+                    else
+                        yad --info \
+                            --wrap \
+                            --title="Dispositivo Olvidado" \
+                            --text="El registro del destino se eliminó del historial de respaldos de Notas Zopeck." \
+                            --width=450 --center --button="Aceptar:0"
+                    fi
+                fi
+                ;;
+            *)
+                : 
+                ;;
+        esac
+    done
+}

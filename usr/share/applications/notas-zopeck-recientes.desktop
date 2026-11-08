@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Notas Zopeck (10 Recientes)
+Comment=Acceso ultrarrápido a las últimas 10 notas vistas
+Exec=/usr/local/bin/notas-zopeck-tray-10.sh
+Icon=notas_bw_10
+Terminal=false
+Categories=Utility;TextEditor;

@@ -1,0 +1,27 @@
+# ==============================================================================
+# Función: inicializar_entorno_usuario
+# Descripción: Crea la estructura en ~/.local/share y ~/.config en el primer uso.
+# ==============================================================================
+inicializar_entorno_usuario() {
+    local NOTAS_DIR="${HOME}/.local/share/notas-zopeck"
+    local CONFIG_DIR="${HOME}/.config"
+    local CONFIG_FILE="${CONFIG_DIR}/notas_zopeck.conf"
+    local HISTORIAL_FILE="${CONFIG_DIR}/zopeck_bk_historial.log"
+    local DEFAULT_CFG="/usr/share/notas-zopeck/notas_zopeck.conf.default"
+
+    # Asegurar directorios de usuario
+    mkdir -p "$NOTAS_DIR"
+    mkdir -p "$CONFIG_DIR"
+
+    # Inicializar archivo de configuración si no existe
+    if [ ! -f "$CONFIG_FILE" ]; then
+        if [ -f "$DEFAULT_CFG" ]; then
+            cp "$DEFAULT_CFG" "$CONFIG_FILE"
+        else
+            echo "USE_FASTER_MEDIA=true" > "$CONFIG_FILE"
+        fi
+    fi
+
+    # Asegurar historial vacío
+    [ -f "$HISTORIAL_FILE" ] || touch "$HISTORIAL_FILE"
+}

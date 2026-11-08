@@ -1,0 +1,72 @@
+# ------------------------------------------------------------------------------
+# 4. Formulario Completo de Búsqueda
+# ------------------------------------------------------------------------------
+buscar_texto_formulario() {
+    FORM_DATA=$(yad --form \
+        --title="Búsqueda Avanzada en Notas" \
+        --window-icon="system-search" \
+        --width=450 --center \
+        --field="Texto / Patrón:":ET "" \
+        --field="Operador Lógico:":CB "O (OR)!Y (AND)" \
+        --field="Respetar Mayúsculas/Minúsculas":CHK FALSE \
+        --field="Buscar palabras completas":CHK FALSE \
+        --button="Buscar:0" \
+        --button="Cancelar:1")
+
+    [ $? -ne 0 ] || [ -z "$FORM_DATA" ] && exit 0
+
+    PATRON=$(echo "$FORM_DATA" | awk -F'|' '{print $1}')
+    OPERADOR=$(echo "$FORM_DATA" | awk -F'|' '{print $2}')
+    MAYUSCULAS=$(echo "$FORM_DATA" | awk -F'|' '{print $3}')
+    PALABRA_EXACTA=$(echo "$FORM_DATA" | awk -F'|' '{print $4}')
+
+    [ -z "$PATRON" ] && exit 0
+
+    local grep_opts=("-l")
+    [ "$MAYUSCULAS" = "FALSE" ] && grep_opts+=("-i")
+    [ "$PALABRA_EXACTA" = "TRUE" ] && grep_opts+=("-w")
+
+    read -r -a PALABRAS <<< "$PATRON"
+
+    local tmp_coincidencias="/tmp/notas_zopeck_found_${USER}.tmp"
+
+    if [ "${OPERADOR:0:1}" = "Y" ]; then
+        local primer_paso=true
+        local tmp_paso="/tmp/notas_zopeck_step_${USER}.tmp"
+
+        for p in "${PALABRAS[@]}"; do
+            if [ "$primer_paso" = true ]; then
+                grep "${grep_opts[@]}" -e "$p" "$NOTAS_DIR"/*.txt 2>/dev/null > "$tmp_coincidencias"
+                primer_paso=false
+            else
+                if [ -s "$tmp_coincidencias" ]; then
+                    xargs grep "${grep_opts[@]}" -e "$p" < "$tmp_coincidencias" 2>/dev/null > "$tmp_paso"
+                    mv "$tmp_paso" "$tmp_coincidencias"
+                fi
+            fi
+        done
+        rm -f "$tmp_paso"
+    else
+        local grep_args=()
+        for p in "${PALABRAS[@]}"; do
+            grep_args+=("-e" "$p")
+        done
+        grep "${grep_opts[@]}" "${grep_args[@]}" "$NOTAS_DIR"/*.txt 2>/dev/null | sort -u > "$tmp_coincidencias"
+    fi
+
+	RESULTADOS=()
+    TODAS_RUTAS=()
+
+	if [ -s "$tmp_coincidencias" ]; then
+        while IFS='|' read -r btime base titulo btime_str mtime_str ruta; do
+            [ -z "$ruta" ] && continue
+            RESULTADOS+=("$base" "$titulo" "$btime_str" "$mtime_str" "$ruta")
+            TODAS_RUTAS+=("$ruta")
+        done < <(awk -F'|' 'NR==FNR { gsub(/\r/, ""); found[$0]=1; next } { gsub(/\r/, ""); if (found[$6]) print }' "$tmp_coincidencias" "$CACHE_MAPA")
+    fi
+
+    rm -f "$tmp_coincidencias"
+
+    local info_extra="<b>Búsqueda:</b> '<span foreground='#2e7d32'><b>$PATRON</b></span>' | <b>Modo:</b> <span foreground='#2e7d32'><b>$OPERADOR</b></span> | <b>Mayús:</b> <span foreground='#2e7d32'><b>$MAYUSCULAS</b></span> | <b>Exacta:</b> <span foreground='#2e7d32'><b>$PALABRA_EXACTA</b></span>"
+    mostrar_lista_yad "Resultados de búsqueda" "" "si" "$info_extra"
+}

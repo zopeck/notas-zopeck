@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -e
+# Tareas previas a la instalación si fueran necesarias
+exit 0

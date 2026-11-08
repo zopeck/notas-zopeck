@@ -1,0 +1,46 @@
+# ------------------------------------------------------------------------------
+# 2. Reordenamiento por Sesión LRU (Optimizado en C/AWK)
+# ------------------------------------------------------------------------------
+reordenar_resultados_sesion() {
+    [ ! -f "$SESION_RECIENTES" ] || [ ! -s "$SESION_RECIENTES" ] && return 0
+    [ ${#RESULTADOS[@]} -eq 0 ] && return 0
+
+    local tmp_res="/tmp/zopeck_reorder_${USER}.tmp"
+    
+    # Imprimir RESULTADOS agrupados por líneas de 5 campos
+    printf "%s\n" "${RESULTADOS[@]}" | awk '
+        NR==FCND { next }
+        {
+            base=$0; getline tit; getline bc; getline bm; getline ruta
+            if (ruta != "") {
+                map_base[ruta]=base; map_tit[ruta]=tit
+                map_bc[ruta]=bc; map_bm[ruta]=bm
+                rutas[++c]=ruta
+            }
+        }
+        END {
+            # 1. Procesar recientes primero
+            while ((getline r < "'"$SESION_RECIENTES"'") > 0) {
+                if (r in map_base) {
+                    print map_base[r]; print map_tit[r]
+                    print map_bc[r]; print map_bm[r]; print r
+                    proc[r]=1
+                }
+            }
+            close("'"$SESION_RECIENTES"'")
+            # 2. Procesar el resto
+            for (i=1; i<=c; i++) {
+                r=rutas[i]
+                if (!(r in proc)) {
+                    print map_base[r]; print map_tit[r]
+                    print map_bc[r]; print map_bm[r]; print r
+                }
+            }
+        }
+    ' - > "$tmp_res"
+
+    if [ -s "$tmp_res" ]; then
+        mapfile -t RESULTADOS < "$tmp_res"
+    fi
+    rm -f "$tmp_res"
+}

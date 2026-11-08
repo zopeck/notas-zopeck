@@ -1,0 +1,178 @@
+# ==============================================================================
+# Función: zopeck_info_dispositivo
+# Descripción: Devuelve UNA línea que identifica el DISCO FÍSICO donde está
+#              montado un directorio:  "Fabricante Modelo (Tamaño total) S/N xxxx"
+#              (tamaño del disco completo, no de la partición).
+#              Es la única fuente de esta información: la usan tanto
+#              respaldar_notas_zopeck (al escribir el historial) como
+#              gestion_backup_zopeck (al mostrarlo).
+# Uso:         zopeck_info_dispositivo /media/mark/MI_USB
+# ==============================================================================
+
+# Tamaño en unidades decimales (como en la caja del producto: 64 GB, 8 GB...)
+_zopeck_tamano_humano() {
+    LC_ALL=C awk -v b="$1" 'BEGIN {
+        if (b + 0 <= 0) exit
+        g = b / 1e9
+        if (g >= 1000)    s = sprintf("%.1f TB", g / 1000)
+        else if (g >= 1)  s = sprintf("%.1f GB", g)
+        else              s = sprintf("%.0f MB", b / 1e6)
+        sub(/\.0 /, " ", s)
+        print s
+    }'
+}
+
+# Extrae NOMBRE=valor de una salida de "udevadm info --query=property"
+_zopeck_prop() {
+    sed -n "s/^$2=//p" <<<"$1" | head -n 1
+}
+
+# Fabricante a partir del manfid de tarjetas MMC/SD (sysfs)
+_zopeck_mmc_fabricante() {
+    local tipo="$1" id="${2#0x}" n
+    [[ "$id" =~ ^[0-9a-fA-F]+$ ]] || return 0
+    n=$((16#$id))
+    if [ "$tipo" = "SD" ]; then
+        case $n in
+            3)   echo "SanDisk" ;;       27)  echo "Samsung" ;;
+            29)  echo "ADATA" ;;         39)  echo "Phison" ;;
+            40)  echo "Lexar" ;;         49)  echo "Silicon Power" ;;
+            65)  echo "Kingston" ;;      116) echo "Transcend" ;;
+            130) echo "Sony" ;;
+            *)   printf 'ID 0x%02x\n' "$n" ;;
+        esac
+    else
+        case $n in
+            2|69) echo "SanDisk" ;;  17)      echo "Toshiba" ;;
+            19|254) echo "Micron" ;; 21)      echo "Samsung" ;;
+            144)  echo "SK Hynix" ;;
+            *)    printf 'ID 0x%02x\n' "$n" ;;
+        esac
+    fi
+}
+
+# Descripción de un dispositivo de bloque (partición, LVM, LUKS...) -> disco padre
+_zopeck_info_bloque() {
+    local real parent dev props vendor model serial bus db
+    real=$(readlink -f "$1")
+
+    # Sube por la cadena partición -> (lvm/crypt) -> disco y toma el TYPE "disk"
+    parent=$(lsblk -srno NAME,TYPE "$real" 2>/dev/null | awk '$2=="disk" {print $1; exit}')
+    if [ -z "$parent" ]; then
+        echo "Volumen virtual ($(basename "$1"))"
+        return 0
+    fi
+    dev="/dev/${parent}"
+
+    props=$(udevadm info --query=property --name="$dev" 2>/dev/null)
+    vendor=$(_zopeck_prop "$props" ID_VENDOR);  vendor=${vendor//_/ }
+    model=$(_zopeck_prop "$props" ID_MODEL);    model=${model//_/ }
+    serial=$(_zopeck_prop "$props" ID_SERIAL_SHORT)
+    bus=$(_zopeck_prop "$props" ID_BUS)
+
+    # Fabricante USB que solo viene como código hexadecimal (ej. "090c")
+    if [ -z "$vendor" ] || [[ "$vendor" =~ ^[0-9a-fA-F]{4}$ ]]; then
+        db=$(_zopeck_prop "$props" ID_VENDOR_FROM_DATABASE)
+        [ -n "$db" ] && vendor=$(sed 's/[,(].*//; s/ - .*//; s/ *$//' <<<"$db")
+    fi
+    [ "$vendor" = "ATA" ] && vendor=""   # SATA: "ATA" no es un fabricante
+
+    if [ -z "$model" ]; then
+        model=$(_zopeck_prop "$props" ID_MODEL_FROM_DATABASE)
+        [ -z "$model" ] && model=$(lsblk -dno MODEL "$dev" 2>/dev/null | head -n 1)
+        [ -z "$model" ] && [ -r "/sys/block/${parent}/device/model" ] && model=$(< "/sys/block/${parent}/device/model")
+    fi
+    if [ -z "$vendor" ] && [ -r "/sys/block/${parent}/device/vendor" ]; then
+        vendor=$(< "/sys/block/${parent}/device/vendor")
+        [ "$vendor" = "ATA" ] && vendor=""
+    fi
+
+    # eMMC internas y tarjetas SD: no pasan por udev con vendor/model
+    if [[ "$parent" == mmcblk* ]] && [ -d "/sys/block/${parent}/device" ]; then
+        local sysd="/sys/block/${parent}/device" tipo nombre manf
+        tipo=$(cat "$sysd/type" 2>/dev/null)
+        nombre=$(cat "$sysd/name" 2>/dev/null)
+        manf=$(cat "$sysd/manfid" 2>/dev/null)
+        [ -z "$serial" ] && serial=$(cat "$sysd/serial" 2>/dev/null)
+        [ -z "$vendor" ] && vendor=$(_zopeck_mmc_fabricante "$tipo" "$manf")
+        [ -z "$model" ]  && model="${nombre:-${tipo:-MMC}}"
+        [ "$tipo" = "MMC" ] && bus="eMMC"
+        [ "$tipo" = "SD" ]  && bus="SD"
+    fi
+
+    # Compone el nombre evitando repetir el fabricante si ya está en el modelo
+    local nombre_final
+    if [ -n "$vendor" ] && [[ "$model" != "$vendor"* ]]; then
+        nombre_final="${vendor} ${model}"
+    else
+        nombre_final="$model"
+    fi
+    nombre_final=$(xargs <<<"$nombre_final" 2>/dev/null || echo "$nombre_final")
+    [ -z "$nombre_final" ] && nombre_final="Disco ${bus:+${bus^^} }sin identificar"
+
+    local tam salida
+    tam=$(_zopeck_tamano_humano "$(lsblk -bdno SIZE "$dev" 2>/dev/null | head -n 1)")
+    salida="$nombre_final"
+    [ -n "$tam" ] && salida+=" (${tam})"
+    if [ -n "$serial" ]; then
+        serial=$(printf '%s' "$serial" | tail -c 8)
+        salida+=" S/N ${serial}"
+    fi
+    printf '%s\n' "$salida"
+}
+
+# ==============================================================================
+# Función: zopeck_info_dispositivo
+# Descripción: Devuelve el Tipo (Local/Remoto) y la descripción formateada.
+# Uso:         IFS='#' read -r tipo desc <<< "$(zopeck_info_dispositivo /punto)"
+# ==============================================================================
+
+zopeck_info_dispositivo() {
+    local punto="$1" src fstype salida tipo="Local"
+    src=$(findmnt -n -o SOURCE -T "$punto" 2>/dev/null | head -n 1)
+    fstype=$(findmnt -n -o FSTYPE -T "$punto" 2>/dev/null | head -n 1)
+    src=${src%%\[*}
+
+    if [[ "$punto" == *gvfs* ]]; then
+        tipo="Remoto"
+        salida="Red (GVfs): $(basename "$punto")"
+    elif [ -n "$src" ] && [ -b "$src" ]; then
+        tipo="Local"
+        salida=$(_zopeck_info_bloque "$src")
+    else
+        case "$fstype" in
+            fuse.sshfs|sshfs)
+                tipo="Remoto"
+                local host_user dir_remoto
+                host_user=$(echo "$src" | cut -d':' -f1)
+                dir_remoto=$(echo "$src" | cut -d':' -f2-)
+
+                if [[ "$dir_remoto" =~ /srv/dev-disk-by-uuid-[^/]+/(.+) ]]; then
+                    dir_remoto="/srv/.../${BASH_REMATCH[1]}"
+                elif [[ "$dir_remoto" =~ /srv/[^/]+/(.+) ]]; then
+                    dir_remoto="/srv/.../${BASH_REMATCH[1]}"
+                fi
+
+                if [ -n "$host_user" ] && [ -n "$dir_remoto" ]; then
+                    salida="${host_user} (${dir_remoto})"
+                else
+                    salida="SSHFS: ${src}"
+                fi
+                ;;
+            nfs*|cifs|smbfs|davfs|fuse.*)
+                tipo="Remoto"
+                salida="Red (${fstype}): $(basename "$src")"
+                ;;
+            *)
+                tipo="Local"
+                salida="Almacenamiento local (${fstype:-desconocido})"
+                ;;
+        esac
+    fi
+
+    # Limpieza de caracteres conflictivos
+    salida=$(printf '%s\n' "$salida" | tr -d '<>&|#' | tr -s ' ')
+    
+    # Devuelve: TIPO#DESCRIPCION
+    echo "${tipo}#${salida}"
+}
