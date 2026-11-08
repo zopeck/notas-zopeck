@@ -23,6 +23,6 @@ sudo apt-get install -f # para resolver dependencias si fuera necesario
 
 
 ## Autor
-**Mark**
-*Marco A. Rodriguez G.*
+**"Mark"**
+*(Marco A. Rodriguez G.)*
 *email: zopeck@gmail.com*
