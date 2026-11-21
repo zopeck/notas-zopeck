@@ -1,0 +1,12 @@
+[START]
+[ -n "$USER" ] && { nohup /usr/local/bin/notas-zopeck-tray.sh >/dev/null 2>&1 & nohup /usr/local/bin/notas-zopeck-tray-10.sh >/dev/null 2>&1 & }
+
+[STOP]
+sudo pkill -f "notas-zopeck-tray.sh"
+sudo pkill -f "notas-zopeck-recientes.sh"
+
+[VERSION]
+1.0-1
+
+[ARQUITECTURA]
+amd64

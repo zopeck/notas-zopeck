@@ -1,0 +1,9 @@
+# Archivos temporales y de editor
+*~
+.swp
+.DS_Store
+*.log
+
+# Paquetes compilados (se suben a Releases, no al código fuente)
+*.deb
+

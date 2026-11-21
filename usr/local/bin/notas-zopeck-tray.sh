@@ -5,11 +5,11 @@
 # ==============================================================================
 
 NOTAS_DIR="${HOME}/.local/share/notas-zopeck"
-PIPE_YAD="/tmp/busqueda_notas_tray_lab_${USER}.fifo"
+PIPE_YAD="/tmp/busqueda_notas_tray_${USER}.fifo"
 HELP_FILE="/usr/share/notas-zopeck/notas_zopeck_help.txt"
 FUNCIONES="/usr/share/notas-zopeck/funciones"
 
-# Inicializar entorno de usuario
+# Inicializar entorno de usuario:
 source "${FUNCIONES}/inicializa_entorno"
 inicializar_entorno_usuario
 

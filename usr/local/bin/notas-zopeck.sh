@@ -71,7 +71,7 @@ case "$1" in
         ;;
 	--view)
         if [ -f "$2" ]; then
-            local ruta_absoluta
+            # local ruta_absoluta # se comento porque una variable "local" solo se crea dentro de una funcion.
             ruta_absoluta=$(readlink -f "$2")
             
             if verificar_instancia_activa "$ruta_absoluta"; then

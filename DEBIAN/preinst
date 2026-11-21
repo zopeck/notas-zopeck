@@ -1,4 +1,53 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
-# Tareas previas a la instalación si fueran necesarias
+
+# 1. Verificar si existe dpkg o si el OS deriva de Debian
+if [ ! -f /etc/os-release ]; then
+    echo "ERROR: No se puede identificar el sistema operativo." >&2
+    exit 1
+fi
+
+# Leer ID e ID_LIKE sin importar binarios externos pesados
+OS_ID=$(cat /etc/os-release | grep -E '^ID=' | cut -d'=' -f2 | tr -d '"')
+OS_LIKE=$(cat /etc/os-release | grep -E '^ID_LIKE=' | cut -d'=' -f2 | tr -d '"')
+
+IS_DEBIAN=0
+if [ "$OS_ID" = "debian" ] || echo "$OS_LIKE" | grep -q "debian"; then
+    IS_DEBIAN=1
+fi
+
+if [ "$IS_DEBIAN" -eq 0 ]; then
+    echo "ERROR: Este paquete solo es compatible con distribuciones basadas en Debian." >&2
+    exit 1
+else
+	echo "--> Sistema basado en Debian detectado."
+	echo "\tProseguimos con la verificacion de soporte para systemd..."
+fi
+echo ""
+# 2. Verificar si systemd es el init activo (PID 1)
+if [ -d /run/systemd/system ] || [ "$(readlink -f /sbin/init)" = "/lib/systemd/systemd" ]; then
+    HAS_SYSTEMD=true
+else
+    HAS_SYSTEMD=false
+fi
+
+if [ "$HAS_SYSTEMD" = "true" ]; then
+    echo "--> Sistema con systemd detectado."
+    echo "\tProseguimos con la verificacion de la salida a la internet" # Habilitar o recargar servicios si corresponde
+else
+    echo "--> Sistema sin systemd (sysvinit/runit/elogind) detectado."
+    echo "El sistema no cumple con un requisito: No soportamos Systemd, saliendo..." # Lógica alternativa o advertencia
+    exit 1
+fi
+echo ""
+echo "[*] Verificando conectividad antes de la instalación de Notas Zopeck..."
+if curl -Is --connect-timeout 3 http://www.google.com >/dev/null 2>&1; then
+	echo "\t✔ Conexión a Internet verificada.\n"
+else
+	echo "\n\t[!] ERROR DE CONEXIÓN: No se detecta salida a Internet."
+	echo "\t Se requiere a fin de instalar dependencias del programa."
+	echo "\tSugerencia: Verifica tu red e intenta nuevamente cuando dispongas de acceso.\n"
+	exit 1
+fi
+
 exit 0

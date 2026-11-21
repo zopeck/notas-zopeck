@@ -25,7 +25,7 @@
 
 <b>4. UBICACIÓN DE LAS NOTAS:</b>
    - Todas tus notas se guardan en formato de texto plano en:
-     ~/.local/share/notas/
+     ~/.local/share/notas-zopeck/
 
 <b>======================================================================</b>
 
