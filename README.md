@@ -18,6 +18,7 @@ Diseñado bajo una filosofía de consumo mínimo de recursos, aprovecha la memor
   - Algoritmo *Smart Speed Upgrade* para sugerir el medio de almacenamiento de menor latencia.
   - Historial de destinos con opción de fijar dispositivo preferido o purgar copias.
 - 🔒 **Control de Instancias:** Previene la apertura duplicada de notas en edición o lectura.
+- 💾 **Autoguardado**: No necesitas guardar, con notas nuevas, simplemente escribes, y cierras... 
 
 ---
 
